@@ -23,6 +23,7 @@ local function resetGame()
 	moveTimer = 0
 	score = 0
 	gameOver = false
+	paused = false
 end
 
 -- Initialization
