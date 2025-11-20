@@ -1,129 +1,15 @@
+local lcd = require("lcd")
+
 local gridSize, gridWidth, gridHeight
 local snake, food
+local gameState -- "menu", "playing", "instructions", "gameover"
+local selectedMenuOption
+local menuOptions
+local gameMode -- "classic" or "zen"
 
 -- Helper Functions
 local function gridToPixels(gridX, gridY)
 	return (gridX - 1) * gridSize, (gridY - 1) * gridSize
-end
-
--- LCD 7-segment patterns for digits (3x5 grid for each digit)
--- Each digit is represented as a table of {x, y} coordinates relative to digit origin
-local lcdDigits = {
-	[0] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {3,3}, -- middle sides
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[1] = {
-		{3,1}, {3,2}, {3,3}, {3,4}, {3,5}, -- right side
-	},
-	[2] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{3,2}, -- upper right
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, -- lower left
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[3] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{3,2}, -- upper right
-		{1,3}, {2,3}, {3,3}, -- middle
-		{3,4}, -- lower right
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[4] = {
-		{1,1}, {3,1}, -- top corners
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {2,3}, {3,3}, -- middle
-		{3,4}, {3,5}, -- right side
-	},
-	[5] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, -- upper left
-		{1,3}, {2,3}, {3,3}, -- middle
-		{3,4}, -- lower right
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[6] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, -- upper left
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[7] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{3,2}, {3,3}, {3,4}, {3,5}, -- right side
-	},
-	[8] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	[9] = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {2,3}, {3,3}, -- middle
-		{3,4}, -- lower right
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-}
-
--- LCD letter patterns (3x5 grid for each letter)
-local lcdLetters = {
-	G = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, -- left side
-		{1,3}, {2,3}, {3,3}, -- middle with right
-		{1,4}, {3,4}, -- sides
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	A = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {3,5}, -- bottom corners
-	},
-	M = {
-		{1,1}, {1,2}, {1,3}, {1,4}, {1,5}, -- left side
-		{2,2}, -- left peak
-		{3,1}, {3,2}, {3,3}, {3,4}, {3,5}, -- right side
-	},
-	E = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, -- left
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, -- left
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	O = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {3,3}, -- middle sides
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {2,5}, {3,5}, -- bottom
-	},
-	V = {
-		{1,1}, {1,2}, {1,3}, {1,4}, -- left side
-		{2,5}, -- bottom center
-		{3,1}, {3,2}, {3,3}, {3,4}, -- right side
-	},
-	R = {
-		{1,1}, {2,1}, {3,1}, -- top
-		{1,2}, {3,2}, -- upper sides
-		{1,3}, {2,3}, {3,3}, -- middle
-		{1,4}, {3,4}, -- lower sides
-		{1,5}, {3,5}, -- bottom corners
-	},
-}
-
-local function calculateManhattanDistance(x1, y1, x2, y2)
-	return math.abs(x2 - x1) + math.abs(y2 - y1)
 end
 
 local function spawnFood()
@@ -151,6 +37,9 @@ end
 
 -- Initialization
 function love.load()
+	-- Set nearest neighbor filtering for crisp pixels/fonts
+	love.graphics.setDefaultFilter("nearest", "nearest")
+
 	gridSize = 20
 	gridWidth = 30
 	gridHeight = 20
@@ -162,6 +51,10 @@ function love.load()
 	gameOver = false
 	foodTimer = 0
 	gameOverColorTimer = 0
+	gameState = "menu"
+	selectedMenuOption = 1
+	menuOptions = { "Classic Mode", "Zen Mode", "Instructions", "Quit" }
+	gameMode = "classic"
 
 	baseWidth = gridWidth * gridSize -- 600
 	baseHeight = gridHeight * gridSize -- 400
@@ -172,9 +65,10 @@ function love.load()
 		minheight = baseHeight,
 	})
 
-	fontSmall = love.graphics.newFont("fonts/Kenney Pixel.ttf", 14)
-	fontMedium = love.graphics.newFont("fonts/Kenney Pixel.ttf", 24)
-	fontLarge = love.graphics.newFont("fonts/Kenney Pixel.ttf", 48)
+	fontSmall = love.graphics.newFont("fonts/Kenney Future.ttf", 14)
+	fontMedium = love.graphics.newFont("fonts/Kenney Future.ttf", 24)
+	fontLarge = love.graphics.newFont("fonts/Kenney Future.ttf", 48)
+	fontTitle = love.graphics.newFont("fonts/Kenney Blocks.ttf", 64)
 
 	sounds = {
 		ambiance = love.audio.newSource("audio/ambiance.ogg", "stream"),
@@ -204,9 +98,69 @@ function love.load()
 	resetGame()
 end
 
-local function handleInput(key)
+local function handleMenuInput(key)
+	if key == "up" then
+		selectedMenuOption = selectedMenuOption - 1
+		if selectedMenuOption < 1 then
+			selectedMenuOption = #menuOptions
+		end
+		sounds.ui:play()
+	elseif key == "down" then
+		selectedMenuOption = selectedMenuOption + 1
+		if selectedMenuOption > #menuOptions then
+			selectedMenuOption = 1
+		end
+		sounds.ui:play()
+	elseif key == "return" or key == "space" then
+		sounds.ui:play()
+		if selectedMenuOption == 1 then
+			-- Classic Mode
+			gameMode = "classic"
+			gameState = "playing"
+			resetGame()
+		elseif selectedMenuOption == 2 then
+			-- Zen Mode
+			gameMode = "zen"
+			gameState = "playing"
+			resetGame()
+		elseif selectedMenuOption == 3 then
+			-- Instructions
+			gameState = "instructions"
+		elseif selectedMenuOption == 4 then
+			-- Quit
+			love.event.quit()
+		end
+	end
+end
+
+local function handleInstructionsInput(key)
+	if key == "escape" or key == "return" or key == "space" then
+		sounds.ui:play()
+		gameState = "menu"
+	end
+end
+
+local function handleGameInput(key)
+	if gameOver then
+		if key == "r" then
+			resetGame()
+			return
+		elseif key == "escape" or key == "return" then
+			gameState = "menu"
+			sounds.ui:play()
+			return
+		end
+		return
+	end
+
 	if key == "r" then
 		resetGame()
+		return
+	end
+
+	if key == "escape" then
+		gameState = "menu"
+		sounds.ui:play()
 		return
 	end
 
@@ -230,15 +184,27 @@ local function handleInput(key)
 	end
 end
 
+local function handleInput(key)
+	if gameState == "menu" then
+		handleMenuInput(key)
+	elseif gameState == "instructions" then
+		handleInstructionsInput(key)
+	elseif gameState == "playing" then
+		handleGameInput(key)
+	end
+end
+
 -- Input Handling
 function love.keypressed(key)
 	handleInput(key)
 end
 
 local function checkCollisions(newHead)
-	-- Check for wall collision
-	if newHead.x < 1 or newHead.x > gridWidth or newHead.y < 1 or newHead.y > gridHeight then
-		return true
+	-- Check for wall collision (only in classic mode)
+	if gameMode == "classic" then
+		if newHead.x < 1 or newHead.x > gridWidth or newHead.y < 1 or newHead.y > gridHeight then
+			return true
+		end
 	end
 
 	-- Check for self collision
@@ -288,6 +254,20 @@ local function updateSnakeMovement(dt)
 			newHead.y = newHead.y - 1
 		end
 
+		-- Wrap around walls in zen mode
+		if gameMode == "zen" then
+			if newHead.x < 1 then
+				newHead.x = gridWidth
+			elseif newHead.x > gridWidth then
+				newHead.x = 1
+			end
+			if newHead.y < 1 then
+				newHead.y = gridHeight
+			elseif newHead.y > gridHeight then
+				newHead.y = 1
+			end
+		end
+
 		-- Check for collisions
 		if checkCollisions(newHead) then
 			gameOver = true
@@ -300,41 +280,42 @@ local function updateSnakeMovement(dt)
 
 		-- Check if food was eaten
 		if newHead.x == food.x and newHead.y == food.y then
-			-- Calculate score based on apple ripeness (5 decay stages)
-			-- Fresh green: < 1.2 sec = 3 points (unripe, tart)
-			-- Perfect red: 1.2-2.4 sec = 5 points (ripe, sweet - best!)
-			-- Overripe burgundy: 2.4-3.6 sec = 2 points (getting soft)
-			-- Rotten brown: 3.6-4.8 sec = 1 point (spoiled)
-			-- Moldy black: > 4.8 sec = -1 point (toxic!)
-			local pointsEarned = -1
-			if foodTimer < 1.2 then
-				pointsEarned = 3
-			elseif foodTimer < 2.4 then
+			local pointsEarned
+			local r, g, b
+
+			-- In zen mode, always give 5 points and red color
+			if gameMode == "zen" then
 				pointsEarned = 5
-			elseif foodTimer < 3.6 then
-				pointsEarned = 2
-			elseif foodTimer < 4.8 then
-				pointsEarned = 1
+				r, g, b = 1, 0.1, 0.1 -- Red
+			else
+				-- Classic mode: Calculate score based on apple ripeness (5 decay stages)
+				-- Fresh green: < 1.2 sec = 3 points (unripe, tart)
+				-- Perfect red: 1.2-2.4 sec = 5 points (ripe, sweet - best!)
+				-- Overripe burgundy: 2.4-3.6 sec = 2 points (getting soft)
+				-- Rotten brown: 3.6-4.8 sec = 1 point (spoiled)
+				-- Moldy black: > 4.8 sec = -1 point (toxic!)
+				pointsEarned = -1
+				if foodTimer < 1.2 then
+					pointsEarned = 3
+					r, g, b = 0.4, 1, 0.2 -- Lime
+				elseif foodTimer < 2.4 then
+					pointsEarned = 5
+					r, g, b = 1, 0.1, 0.1 -- Red
+				elseif foodTimer < 3.6 then
+					pointsEarned = 2
+					r, g, b = 0.7, 0.1, 0.3 -- Burgundy
+				elseif foodTimer < 4.8 then
+					pointsEarned = 1
+					r, g, b = 0.6, 0.3, 0.1 -- Orange
+				else
+					r, g, b = 0.6, 0.2, 0.6 -- Purple
+				end
 			end
 
 			-- Emit particles at food position with apple's color
 			local foodX, foodY = gridToPixels(food.x, food.y)
 			local particleX = foodX + gridSize / 2
 			local particleY = foodY + gridSize / 2
-
-			-- Set particle color based on apple state
-			local r, g, b = 1, 1, 1
-			if foodTimer < 1.2 then
-				r, g, b = 0.4, 1, 0.2 -- Lime
-			elseif foodTimer < 2.4 then
-				r, g, b = 1, 0.1, 0.1 -- Red
-			elseif foodTimer < 3.6 then
-				r, g, b = 0.7, 0.1, 0.3 -- Burgundy
-			elseif foodTimer < 4.8 then
-				r, g, b = 0.6, 0.3, 0.1 -- Orange
-			else
-				r, g, b = 0.6, 0.2, 0.6 -- Purple
-			end
 
 			particleSystem:setColors(r, g, b, 1, r, g, b, 0)
 			particleSystem:setPosition(particleX, particleY)
@@ -357,6 +338,10 @@ end
 
 -- Game Update
 function love.update(dt)
+	if gameState ~= "playing" then
+		return
+	end
+
 	if gameOver then
 		gameOverColorTimer = gameOverColorTimer + dt
 		particleSystem:update(dt)
@@ -374,6 +359,7 @@ end
 
 -- Drawing Functions
 local function drawSnake()
+	love.graphics.setColor(1, 1, 1, 1)
 	for i, segment in ipairs(snake) do
 		local pixelX, pixelY = gridToPixels(segment.x, segment.y)
 		love.graphics.rectangle("fill", pixelX, pixelY, gridSize, gridSize)
@@ -381,69 +367,35 @@ local function drawSnake()
 end
 
 local function drawFood()
-	-- Natural apple decay colors (5 stages) - more vibrant!
-	-- Fresh green: 0-1.2 sec (unripe)
-	-- Perfect red: 1.2-2.4 sec (ripe, sweet)
-	-- Overripe burgundy: 2.4-3.6 sec (getting soft)
-	-- Rotten brown: 3.6-4.8 sec (spoiled)
-	-- Moldy purple: > 4.8 sec (toxic!)
-	local r, g, b = 1, 0, 0 -- default red
+	local r, g, b = 1, 0.1, 0.1 -- default red
 
-	if foodTimer < 1.2 then
-		-- Bright lime green (fresh, unripe)
-		r, g, b = 0.4, 1, 0.2
-	elseif foodTimer < 2.4 then
-		-- Vibrant red (perfect, ripe!)
-		r, g, b = 1, 0.1, 0.1
-	elseif foodTimer < 3.6 then
-		-- Deep burgundy/wine (overripe)
-		r, g, b = 0.7, 0.1, 0.3
-	elseif foodTimer < 4.8 then
-		-- Dark orange/brown (rotten)
-		r, g, b = 0.6, 0.3, 0.1
+	-- In zen mode, always show red apple
+	if gameMode == "zen" then
+		r, g, b = 1, 0.1, 0.1 -- Vibrant red
 	else
-		-- Toxic purple/magenta (moldy - more visible!)
-		r, g, b = 0.6, 0.2, 0.6
+		-- Classic mode: Natural apple decay colors (5 stages)
+		if foodTimer < 1.2 then
+			-- Bright lime green (fresh, unripe)
+			r, g, b = 0.4, 1, 0.2
+		elseif foodTimer < 2.4 then
+			-- Vibrant red (perfect, ripe!)
+			r, g, b = 1, 0.1, 0.1
+		elseif foodTimer < 3.6 then
+			-- Deep burgundy/wine (overripe)
+			r, g, b = 0.7, 0.1, 0.3
+		elseif foodTimer < 4.8 then
+			-- Dark orange/brown (rotten)
+			r, g, b = 0.6, 0.3, 0.1
+		else
+			-- Toxic purple/magenta (moldy - more visible!)
+			r, g, b = 0.6, 0.2, 0.6
+		end
 	end
 
 	love.graphics.setColor(r, g, b, 1)
 	local foodX, foodY = gridToPixels(food.x, food.y)
 	love.graphics.rectangle("fill", foodX, foodY, gridSize, gridSize)
 	love.graphics.setColor(1, 1, 1, 1)
-end
-
-local function drawLCDDigit(digit, startX, startY)
-	local pattern = lcdDigits[digit]
-	if pattern then
-		for _, coord in ipairs(pattern) do
-			local pixelX = startX + (coord[1] - 1) * gridSize
-			local pixelY = startY + (coord[2] - 1) * gridSize
-			love.graphics.rectangle("fill", pixelX, pixelY, gridSize, gridSize)
-		end
-	end
-end
-
-local function drawLCDLetter(letter, startX, startY)
-	local pattern = lcdLetters[letter]
-	if pattern then
-		for _, coord in ipairs(pattern) do
-			local pixelX = startX + (coord[1] - 1) * gridSize
-			local pixelY = startY + (coord[2] - 1) * gridSize
-			love.graphics.rectangle("fill", pixelX, pixelY, gridSize, gridSize)
-		end
-	end
-end
-
-local function drawLCDText(text, startX, startY)
-	local currentX = startX
-	for i = 1, #text do
-		local char = text:sub(i, i)
-		if char ~= " " then
-			drawLCDLetter(char, currentX, startY)
-		end
-		-- Move to next character position (3 cells width + 1 cell spacing)
-		currentX = currentX + 4 * gridSize
-	end
 end
 
 local function drawLCDScore()
@@ -461,7 +413,7 @@ local function drawLCDScore()
 	love.graphics.setColor(0.2, 0.2, 0.2, 0.3)
 	for i = 1, 4 do
 		local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
-		drawLCDDigit(8, digitX, startY)
+		lcd.drawDigit(8, digitX, startY, gridSize)
 	end
 
 	-- Draw score digits in simple gray
@@ -470,7 +422,7 @@ local function drawLCDScore()
 		if i > (4 - digitsToShow) then
 			local digit = tonumber(scoreStr:sub(i, i))
 			local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
-			drawLCDDigit(digit, digitX, startY)
+			lcd.drawDigit(digit, digitX, startY, gridSize)
 		end
 	end
 
@@ -515,6 +467,10 @@ end
 
 local function drawGameOver()
 	if gameOver then
+		-- Dark overlay
+		love.graphics.setColor(0, 0, 0, 0.7)
+		love.graphics.rectangle("fill", 0, 0, baseWidth, baseHeight)
+
 		-- "GAME" = 4 characters, "OVER" = 4 characters
 		-- Each character is 3 cells wide + 1 cell spacing = 4 cells per char
 		-- Width: 4 * 4 = 16 cells
@@ -552,11 +508,153 @@ local function drawGameOver()
 
 		-- Draw "GAME" and "OVER" with animated color
 		love.graphics.setColor(r, g, b, 1)
-		drawLCDText("GAME", gameX, startY)
-		drawLCDText("OVER", gameX, startY + lineHeight + lineSpacing)
+		lcd.drawText("GAME", gameX, startY, gridSize)
+		lcd.drawText("OVER", gameX, startY + lineHeight + lineSpacing, gridSize)
+
+		-- Draw hints below
+		love.graphics.setFont(fontSmall)
+		love.graphics.setColor(1, 1, 1, 1)
+		local hint1 = "Press R to restart"
+		local hint2 = "Press ESC or ENTER to return to menu"
+		local hint1Width = fontSmall:getWidth(hint1)
+		local hint2Width = fontSmall:getWidth(hint2)
+		local hintY = startY + 2 * lineHeight + lineSpacing + 40
+		love.graphics.print(hint1, (baseWidth - hint1Width) / 2, hintY)
+		love.graphics.print(hint2, (baseWidth - hint2Width) / 2, hintY + 20)
 
 		love.graphics.setColor(1, 1, 1, 1)
 	end
+end
+
+local function drawMenu()
+	love.graphics.setColor(1, 1, 1, 1)
+
+	-- Title
+	love.graphics.setFont(fontTitle)
+	local title = "SNAKE"
+	local titleWidth = fontTitle:getWidth(title)
+	love.graphics.print(title, (baseWidth - titleWidth) / 2, 50)
+
+	-- Menu options
+	love.graphics.setFont(fontMedium)
+	local startY = 200
+	local spacing = 50
+
+	for i, option in ipairs(menuOptions) do
+		local optionWidth = fontMedium:getWidth(option)
+		local x = (baseWidth - optionWidth) / 2
+		local y = startY + (i - 1) * spacing
+
+		if i == selectedMenuOption then
+			-- Draw selection indicators on sides
+			love.graphics.setColor(0.4, 1, 0.2, 1) -- Lime green
+			love.graphics.print(">", x - 30, y)
+			love.graphics.print("<", x + optionWidth + 20, y)
+			love.graphics.print(option, x, y)
+		else
+			love.graphics.setColor(0.7, 0.7, 0.7, 1)
+			love.graphics.print(option, x, y)
+		end
+	end
+
+	-- Controls hint
+	love.graphics.setFont(fontSmall)
+	love.graphics.setColor(0.5, 0.5, 0.5, 1)
+	local hint = "Use UP/DOWN to select, ENTER to confirm"
+	local hintWidth = fontSmall:getWidth(hint)
+	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 40)
+
+	love.graphics.setColor(1, 1, 1, 1)
+end
+
+local function drawInstructions()
+	love.graphics.setColor(1, 1, 1, 1)
+
+	-- Title
+	love.graphics.setFont(fontMedium)
+	local title = "HOW TO PLAY"
+	love.graphics.print(title, 30, 20)
+
+	love.graphics.setFont(fontSmall)
+	local lineHeight = 18
+	local sectionSpacing = 30 -- Equal spacing between sections
+	local leftX = 30
+	local rightX = 320
+	local startY = 70
+	local currentY = startY
+
+	-- Left Column: Controls
+	love.graphics.setColor(1, 1, 1, 1)
+	love.graphics.print("CONTROLS:", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  Arrow Keys - Move", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  P - Pause", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  R - Restart", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  ESC - Menu", leftX, currentY)
+	currentY = currentY + sectionSpacing
+
+	-- Objective
+	love.graphics.print("OBJECTIVE:", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  Eat apples to grow", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  and score points.", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  Don't hit walls or", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  yourself!", leftX, currentY)
+	currentY = currentY + sectionSpacing
+
+	-- Tip
+	love.graphics.print("TIP:", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  The game speeds up", leftX, currentY)
+	currentY = currentY + lineHeight
+	love.graphics.print("  as you score more.", leftX, currentY)
+
+	-- Right Column: Apple Ripeness System
+	love.graphics.setColor(1, 1, 1, 1)
+	love.graphics.print("APPLE RIPENESS:", rightX, startY)
+
+	local appleData = {
+		{ color = { 0.4, 1, 0.2 }, text = "3 pts (unripe)" },
+		{ color = { 1, 0.1, 0.1 }, text = "5 pts (perfect!)" },
+		{ color = { 0.7, 0.1, 0.3 }, text = "2 pts" },
+		{ color = { 0.6, 0.3, 0.1 }, text = "1 pt" },
+		{ color = { 0.6, 0.2, 0.6 }, text = "-1 pt (toxic!)" },
+	}
+
+	local appleStartY = startY + lineHeight * 2
+	local squareSize = 10
+	local squareX = rightX + 5
+
+	for i, apple in ipairs(appleData) do
+		local y = appleStartY + (i - 1) * lineHeight
+
+		-- Draw colored square
+		love.graphics.setColor(apple.color[1], apple.color[2], apple.color[3], 1)
+		love.graphics.rectangle("fill", squareX, y + 2, squareSize, squareSize)
+
+		-- Draw text
+		love.graphics.setColor(1, 1, 1, 1)
+		love.graphics.print(apple.text, squareX + squareSize + 8, y)
+	end
+
+	-- Additional info
+	love.graphics.setColor(0.8, 0.8, 0.8, 1)
+	love.graphics.print("Apples change color", rightX, appleStartY + 6 * lineHeight)
+	love.graphics.print("over time!", rightX, appleStartY + 7 * lineHeight)
+
+	-- Back hint
+	love.graphics.setColor(0.5, 0.5, 0.5, 1)
+	local hint = "Press ENTER or ESC to return"
+	local hintWidth = fontSmall:getWidth(hint)
+	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 25)
+
+	love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Rendering
@@ -591,13 +689,19 @@ function love.draw()
 	-- Reset color for game objects
 	love.graphics.setColor(1, 1, 1)
 
-	drawLCDScore()
-	drawSnake()
-	drawFood()
-	love.graphics.draw(particleSystem, 0, 0)
-	drawUI()
-	drawDebugInfo()
-	drawGameOver()
+	if gameState == "menu" then
+		drawMenu()
+	elseif gameState == "instructions" then
+		drawInstructions()
+	elseif gameState == "playing" then
+		drawLCDScore()
+		drawSnake()
+		drawFood()
+		love.graphics.draw(particleSystem, 0, 0)
+		drawUI()
+		-- drawDebugInfo()
+		drawGameOver()
+	end
 
 	love.graphics.pop()
 end
