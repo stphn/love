@@ -6,9 +6,130 @@ local function gridToPixels(gridX, gridY)
 	return (gridX - 1) * gridSize, (gridY - 1) * gridSize
 end
 
+-- LCD 7-segment patterns for digits (3x5 grid for each digit)
+-- Each digit is represented as a table of {x, y} coordinates relative to digit origin
+local lcdDigits = {
+	[0] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {3,3}, -- middle sides
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[1] = {
+		{3,1}, {3,2}, {3,3}, {3,4}, {3,5}, -- right side
+	},
+	[2] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{3,2}, -- upper right
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, -- lower left
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[3] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{3,2}, -- upper right
+		{1,3}, {2,3}, {3,3}, -- middle
+		{3,4}, -- lower right
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[4] = {
+		{1,1}, {3,1}, -- top corners
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {2,3}, {3,3}, -- middle
+		{3,4}, {3,5}, -- right side
+	},
+	[5] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, -- upper left
+		{1,3}, {2,3}, {3,3}, -- middle
+		{3,4}, -- lower right
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[6] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, -- upper left
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[7] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{3,2}, {3,3}, {3,4}, {3,5}, -- right side
+	},
+	[8] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	[9] = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {2,3}, {3,3}, -- middle
+		{3,4}, -- lower right
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+}
+
+-- LCD letter patterns (3x5 grid for each letter)
+local lcdLetters = {
+	G = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, -- left side
+		{1,3}, {2,3}, {3,3}, -- middle with right
+		{1,4}, {3,4}, -- sides
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	A = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {3,5}, -- bottom corners
+	},
+	M = {
+		{1,1}, {1,2}, {1,3}, {1,4}, {1,5}, -- left side
+		{2,2}, -- left peak
+		{3,1}, {3,2}, {3,3}, {3,4}, {3,5}, -- right side
+	},
+	E = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, -- left
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, -- left
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	O = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {3,3}, -- middle sides
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {2,5}, {3,5}, -- bottom
+	},
+	V = {
+		{1,1}, {1,2}, {1,3}, {1,4}, -- left side
+		{2,5}, -- bottom center
+		{3,1}, {3,2}, {3,3}, {3,4}, -- right side
+	},
+	R = {
+		{1,1}, {2,1}, {3,1}, -- top
+		{1,2}, {3,2}, -- upper sides
+		{1,3}, {2,3}, {3,3}, -- middle
+		{1,4}, {3,4}, -- lower sides
+		{1,5}, {3,5}, -- bottom corners
+	},
+}
+
+local function calculateManhattanDistance(x1, y1, x2, y2)
+	return math.abs(x2 - x1) + math.abs(y2 - y1)
+end
+
 local function spawnFood()
 	food.x = math.random(1, gridWidth)
 	food.y = math.random(1, gridHeight)
+	foodTimer = 0
 end
 
 local function resetGame()
@@ -24,6 +145,8 @@ local function resetGame()
 	score = 0
 	gameOver = false
 	paused = false
+	foodTimer = 0
+	gameOverColorTimer = 0
 end
 
 -- Initialization
@@ -37,6 +160,8 @@ function love.load()
 	score = 0
 	highscore = 0
 	gameOver = false
+	foodTimer = 0
+	gameOverColorTimer = 0
 
 	baseWidth = gridWidth * gridSize -- 600
 	baseHeight = gridHeight * gridSize -- 400
@@ -59,6 +184,23 @@ function love.load()
 	}
 	sounds.ambiance:setLooping(true)
 	sounds.ambiance:play()
+
+	-- Create particle system for eating effect
+	local particleImage = love.graphics.newCanvas(4, 4)
+	love.graphics.setCanvas(particleImage)
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.rectangle("fill", 0, 0, 4, 4)
+	love.graphics.setCanvas()
+
+	particleSystem = love.graphics.newParticleSystem(particleImage, 20)
+	particleSystem:setParticleLifetime(0.3, 0.6)
+	particleSystem:setEmissionRate(0)
+	particleSystem:setSizeVariation(1)
+	particleSystem:setLinearAcceleration(-100, -100, 100, 100)
+	particleSystem:setSpeed(50, 150)
+	particleSystem:setSizes(1, 0.5, 0)
+	particleSystem:setSpread(math.pi * 2)
+
 	resetGame()
 end
 
@@ -110,14 +252,17 @@ local function checkCollisions(newHead)
 end
 
 local function updateSpeed()
-	if score < 5 then
+	-- Adjusted thresholds for new scoring system (up to 5 pts per apple)
+	if score < 15 then
 		moveDelay = 0.15
-	elseif score < 10 then
-		moveDelay = 0.12
-	elseif score < 15 then
-		moveDelay = 0.10
-	elseif score < 20 then
-		moveDelay = 0.08
+	elseif score < 30 then
+		moveDelay = 0.13
+	elseif score < 50 then
+		moveDelay = 0.11
+	elseif score < 75 then
+		moveDelay = 0.09
+	elseif score < 100 then
+		moveDelay = 0.07
 	else
 		moveDelay = 0.06
 	end
@@ -155,7 +300,47 @@ local function updateSnakeMovement(dt)
 
 		-- Check if food was eaten
 		if newHead.x == food.x and newHead.y == food.y then
-			score = score + 1
+			-- Calculate score based on apple ripeness (5 decay stages)
+			-- Fresh green: < 1.2 sec = 3 points (unripe, tart)
+			-- Perfect red: 1.2-2.4 sec = 5 points (ripe, sweet - best!)
+			-- Overripe burgundy: 2.4-3.6 sec = 2 points (getting soft)
+			-- Rotten brown: 3.6-4.8 sec = 1 point (spoiled)
+			-- Moldy black: > 4.8 sec = -1 point (toxic!)
+			local pointsEarned = -1
+			if foodTimer < 1.2 then
+				pointsEarned = 3
+			elseif foodTimer < 2.4 then
+				pointsEarned = 5
+			elseif foodTimer < 3.6 then
+				pointsEarned = 2
+			elseif foodTimer < 4.8 then
+				pointsEarned = 1
+			end
+
+			-- Emit particles at food position with apple's color
+			local foodX, foodY = gridToPixels(food.x, food.y)
+			local particleX = foodX + gridSize / 2
+			local particleY = foodY + gridSize / 2
+
+			-- Set particle color based on apple state
+			local r, g, b = 1, 1, 1
+			if foodTimer < 1.2 then
+				r, g, b = 0.4, 1, 0.2 -- Lime
+			elseif foodTimer < 2.4 then
+				r, g, b = 1, 0.1, 0.1 -- Red
+			elseif foodTimer < 3.6 then
+				r, g, b = 0.7, 0.1, 0.3 -- Burgundy
+			elseif foodTimer < 4.8 then
+				r, g, b = 0.6, 0.3, 0.1 -- Orange
+			else
+				r, g, b = 0.6, 0.2, 0.6 -- Purple
+			end
+
+			particleSystem:setColors(r, g, b, 1, r, g, b, 0)
+			particleSystem:setPosition(particleX, particleY)
+			particleSystem:emit(15)
+
+			score = score + pointsEarned
 			updateSpeed()
 			sounds.eat:setVolume(0.2)
 			sounds.eat:play()
@@ -172,10 +357,18 @@ end
 
 -- Game Update
 function love.update(dt)
-	if gameOver or paused then
+	if gameOver then
+		gameOverColorTimer = gameOverColorTimer + dt
+		particleSystem:update(dt)
 		return
 	end
 
+	if paused then
+		return
+	end
+
+	foodTimer = foodTimer + dt
+	particleSystem:update(dt)
 	updateSnakeMovement(dt)
 end
 
@@ -188,34 +381,181 @@ local function drawSnake()
 end
 
 local function drawFood()
-	love.graphics.setColor(1, 0, 0, 1)
+	-- Natural apple decay colors (5 stages) - more vibrant!
+	-- Fresh green: 0-1.2 sec (unripe)
+	-- Perfect red: 1.2-2.4 sec (ripe, sweet)
+	-- Overripe burgundy: 2.4-3.6 sec (getting soft)
+	-- Rotten brown: 3.6-4.8 sec (spoiled)
+	-- Moldy purple: > 4.8 sec (toxic!)
+	local r, g, b = 1, 0, 0 -- default red
+
+	if foodTimer < 1.2 then
+		-- Bright lime green (fresh, unripe)
+		r, g, b = 0.4, 1, 0.2
+	elseif foodTimer < 2.4 then
+		-- Vibrant red (perfect, ripe!)
+		r, g, b = 1, 0.1, 0.1
+	elseif foodTimer < 3.6 then
+		-- Deep burgundy/wine (overripe)
+		r, g, b = 0.7, 0.1, 0.3
+	elseif foodTimer < 4.8 then
+		-- Dark orange/brown (rotten)
+		r, g, b = 0.6, 0.3, 0.1
+	else
+		-- Toxic purple/magenta (moldy - more visible!)
+		r, g, b = 0.6, 0.2, 0.6
+	end
+
+	love.graphics.setColor(r, g, b, 1)
 	local foodX, foodY = gridToPixels(food.x, food.y)
 	love.graphics.rectangle("fill", foodX, foodY, gridSize, gridSize)
 	love.graphics.setColor(1, 1, 1, 1)
 end
 
+local function drawLCDDigit(digit, startX, startY)
+	local pattern = lcdDigits[digit]
+	if pattern then
+		for _, coord in ipairs(pattern) do
+			local pixelX = startX + (coord[1] - 1) * gridSize
+			local pixelY = startY + (coord[2] - 1) * gridSize
+			love.graphics.rectangle("fill", pixelX, pixelY, gridSize, gridSize)
+		end
+	end
+end
+
+local function drawLCDLetter(letter, startX, startY)
+	local pattern = lcdLetters[letter]
+	if pattern then
+		for _, coord in ipairs(pattern) do
+			local pixelX = startX + (coord[1] - 1) * gridSize
+			local pixelY = startY + (coord[2] - 1) * gridSize
+			love.graphics.rectangle("fill", pixelX, pixelY, gridSize, gridSize)
+		end
+	end
+end
+
+local function drawLCDText(text, startX, startY)
+	local currentX = startX
+	for i = 1, #text do
+		local char = text:sub(i, i)
+		if char ~= " " then
+			drawLCDLetter(char, currentX, startY)
+		end
+		-- Move to next character position (3 cells width + 1 cell spacing)
+		currentX = currentX + 4 * gridSize
+	end
+end
+
+local function drawLCDScore()
+	local scoreStr = string.format("%04d", math.min(score, 9999))
+
+	-- Determine how many digits to highlight
+	local digitsToShow = math.max(1, math.floor(math.log10(math.max(score, 1))) + 1)
+
+	-- Center position: 15 cells wide (4 digits * 4 cells each), 5 cells tall
+	local startGridX = math.floor((gridWidth - 15) / 2) + 1
+	local startGridY = math.floor((gridHeight - 5) / 2) + 1
+	local startX, startY = gridToPixels(startGridX, startGridY)
+
+	-- Draw background "8888"
+	love.graphics.setColor(0.2, 0.2, 0.2, 0.3)
+	for i = 1, 4 do
+		local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
+		drawLCDDigit(8, digitX, startY)
+	end
+
+	-- Draw score digits in simple gray
+	love.graphics.setColor(0.5, 0.5, 0.5, 0.9)
+	for i = 1, 4 do
+		if i > (4 - digitsToShow) then
+			local digit = tonumber(scoreStr:sub(i, i))
+			local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
+			drawLCDDigit(digit, digitX, startY)
+		end
+	end
+
+	love.graphics.setColor(1, 1, 1, 1)
+end
+
 local function drawUI()
 	love.graphics.setFont(fontSmall)
-	love.graphics.print("score: " .. score, 10, 10)
-	love.graphics.print("highscore: " .. highscore, 10, 30)
+	love.graphics.print("highscore: " .. highscore, 10, 10)
+end
+
+local function drawDebugInfo()
+	love.graphics.setFont(fontSmall)
+	love.graphics.setColor(0.7, 0.7, 0.7, 1)
+
+	local debugY = baseHeight - 60
+	love.graphics.print("DEBUG INFO:", 10, debugY)
+	love.graphics.print("Food Timer: " .. string.format("%.1f", foodTimer) .. "s", 10, debugY + 15)
+
+	-- Determine color stage and points (5 stages)
+	local colorStage = "Purple (Moldy!)"
+	local pointsEarned = -1
+	if foodTimer < 1.2 then
+		colorStage = "Lime (Unripe)"
+		pointsEarned = 3
+	elseif foodTimer < 2.4 then
+		colorStage = "Red (Perfect!)"
+		pointsEarned = 5
+	elseif foodTimer < 3.6 then
+		colorStage = "Burgundy (Overripe)"
+		pointsEarned = 2
+	elseif foodTimer < 4.8 then
+		colorStage = "Orange (Rotten)"
+		pointsEarned = 1
+	end
+
+	love.graphics.print("Color: " .. colorStage, 10, debugY + 30)
+	love.graphics.print("Next Points: " .. pointsEarned, 10, debugY + 45)
+
+	love.graphics.setColor(1, 1, 1, 1)
 end
 
 local function drawGameOver()
 	if gameOver then
-		love.graphics.setFont(fontLarge)
-		love.graphics.setColor(1, 0, 0)
-		local text = "GAME OVER!"
-		local textWidth = fontLarge:getWidth(text)
-		local textX = (baseWidth - textWidth) / 2
-		local textY = baseHeight / 2 - 40
-		love.graphics.print(text, textX, textY)
+		-- "GAME" = 4 characters, "OVER" = 4 characters
+		-- Each character is 3 cells wide + 1 cell spacing = 4 cells per char
+		-- Width: 4 * 4 = 16 cells
+		local lineWidth = 4 * 4 * gridSize
+		local lineHeight = 5 * gridSize
+		local lineSpacing = 2 * gridSize -- 2 cells spacing between lines
 
-		love.graphics.setFont(fontSmall)
-		local subtext = "Press R to restart"
-		local subtextWidth = fontSmall:getWidth(subtext)
-		local subtextX = (baseWidth - subtextWidth) / 2
-		love.graphics.print(subtext, subtextX, textY + 60)
-		love.graphics.setColor(1, 1, 1)
+		-- Center both lines
+		local gameX = (baseWidth - lineWidth) / 2
+		local totalHeight = 2 * lineHeight + lineSpacing
+		local startY = (baseHeight - totalHeight) / 2
+
+		-- Retro rainbow animation - cycle through colors
+		-- Using HSV to RGB conversion for smooth color cycling
+		local hue = (gameOverColorTimer * 0.5) % 1 -- Cycle every 2 seconds
+		local r, g, b
+
+		-- Simple HSV to RGB (S=1, V=1)
+		local h = hue * 6
+		local x = 1 - math.abs((h % 2) - 1)
+
+		if h < 1 then
+			r, g, b = 1, x, 0
+		elseif h < 2 then
+			r, g, b = x, 1, 0
+		elseif h < 3 then
+			r, g, b = 0, 1, x
+		elseif h < 4 then
+			r, g, b = 0, x, 1
+		elseif h < 5 then
+			r, g, b = x, 0, 1
+		else
+			r, g, b = 1, 0, x
+		end
+
+		-- Draw "GAME" and "OVER" with animated color
+		love.graphics.setColor(r, g, b, 1)
+		drawLCDText("GAME", gameX, startY)
+		drawLCDText("OVER", gameX, startY + lineHeight + lineSpacing)
+
+		love.graphics.setColor(1, 1, 1, 1)
 	end
 end
 
@@ -251,9 +591,12 @@ function love.draw()
 	-- Reset color for game objects
 	love.graphics.setColor(1, 1, 1)
 
+	drawLCDScore()
 	drawSnake()
 	drawFood()
+	love.graphics.draw(particleSystem, 0, 0)
 	drawUI()
+	drawDebugInfo()
 	drawGameOver()
 
 	love.graphics.pop()
