@@ -5,11 +5,18 @@ local snake, food
 local gameState -- "menu", "playing", "instructions", "gameover"
 local selectedMenuOption
 local menuOptions
-local gameMode -- "classic" or "zen"
+local gameMode -- "classic", "zen", or "survival"
+local instructionPage -- 1 = controls/classic, 2 = zen, 3 = survival
 
 -- Helper Functions
 local function gridToPixels(gridX, gridY)
 	return (gridX - 1) * gridSize, (gridY - 1) * gridSize
+end
+
+local function playSound(sound)
+	if not soundsMuted then
+		sound:play()
+	end
 end
 
 local function spawnFood()
@@ -19,20 +26,43 @@ local function spawnFood()
 end
 
 local function resetGame()
-	snake = {
-		{ x = 15, y = 10 }, -- head
-		{ x = 14, y = 10 }, -- body
-		{ x = 13, y = 10 }, -- tail
-	}
+	-- In survival mode, start with length 8
+	if gameMode == "survival" then
+		snake = {
+			{ x = 15, y = 10 }, -- head
+			{ x = 14, y = 10 },
+			{ x = 13, y = 10 },
+			{ x = 12, y = 10 },
+			{ x = 11, y = 10 },
+			{ x = 10, y = 10 },
+			{ x = 9, y = 10 },
+			{ x = 8, y = 10 }, -- tail
+		}
+	else
+		snake = {
+			{ x = 15, y = 10 }, -- head
+			{ x = 14, y = 10 }, -- body
+			{ x = 13, y = 10 }, -- tail
+		}
+	end
 
 	food = { x = 20, y = 10 }
 	direction = "right"
 	moveTimer = 0
 	score = 0
+	survivalTimer = 0
+	comboCount = 0
 	gameOver = false
 	paused = false
 	foodTimer = 0
 	gameOverColorTimer = 0
+
+	-- Set initial speed for survival mode
+	if gameMode == "survival" then
+		moveDelay = 0.18 -- Start slower in survival mode for easier beginning
+	else
+		moveDelay = 0.15
+	end
 end
 
 -- Initialization
@@ -47,14 +77,21 @@ function love.load()
 	moveTimer = 0
 	moveDelay = 0.15
 	score = 0
-	highscore = 0
+	survivalTimer = 0 -- Time survived in survival mode (seconds)
+	comboCount = 0 -- Combo counter for survival mode speed boosts
+	highscoreClassic = 0
+	highscoreZen = 0
+	highscoreSurvival = 0 -- Stores best time in seconds for survival mode
 	gameOver = false
 	foodTimer = 0
 	gameOverColorTimer = 0
 	gameState = "menu"
 	selectedMenuOption = 1
-	menuOptions = { "Classic Mode", "Zen Mode", "Instructions", "Quit" }
+	menuOptions = { "Classic Mode", "Zen Mode", "Survival Mode", "Instructions", "Quit" }
 	gameMode = "classic"
+	instructionPage = 1
+	soundsMuted = false
+	musicMuted = false
 
 	baseWidth = gridWidth * gridSize -- 600
 	baseHeight = gridHeight * gridSize -- 400
@@ -104,15 +141,15 @@ local function handleMenuInput(key)
 		if selectedMenuOption < 1 then
 			selectedMenuOption = #menuOptions
 		end
-		sounds.ui:play()
+		playSound(sounds.ui)
 	elseif key == "down" then
 		selectedMenuOption = selectedMenuOption + 1
 		if selectedMenuOption > #menuOptions then
 			selectedMenuOption = 1
 		end
-		sounds.ui:play()
+		playSound(sounds.ui)
 	elseif key == "return" or key == "space" then
-		sounds.ui:play()
+		playSound(sounds.ui)
 		if selectedMenuOption == 1 then
 			-- Classic Mode
 			gameMode = "classic"
@@ -124,9 +161,14 @@ local function handleMenuInput(key)
 			gameState = "playing"
 			resetGame()
 		elseif selectedMenuOption == 3 then
+			-- Survival Mode
+			gameMode = "survival"
+			gameState = "playing"
+			resetGame()
+		elseif selectedMenuOption == 4 then
 			-- Instructions
 			gameState = "instructions"
-		elseif selectedMenuOption == 4 then
+		elseif selectedMenuOption == 5 then
 			-- Quit
 			love.event.quit()
 		end
@@ -135,8 +177,21 @@ end
 
 local function handleInstructionsInput(key)
 	if key == "escape" or key == "return" or key == "space" then
-		sounds.ui:play()
+		playSound(sounds.ui)
+		instructionPage = 1 -- Reset to first page when exiting
 		gameState = "menu"
+	elseif key == "left" then
+		playSound(sounds.ui)
+		instructionPage = instructionPage - 1
+		if instructionPage < 1 then
+			instructionPage = 3
+		end
+	elseif key == "right" then
+		playSound(sounds.ui)
+		instructionPage = instructionPage + 1
+		if instructionPage > 3 then
+			instructionPage = 1
+		end
 	end
 end
 
@@ -147,7 +202,7 @@ local function handleGameInput(key)
 			return
 		elseif key == "escape" or key == "return" then
 			gameState = "menu"
-			sounds.ui:play()
+			playSound(sounds.ui)
 			return
 		end
 		return
@@ -160,7 +215,7 @@ local function handleGameInput(key)
 
 	if key == "escape" then
 		gameState = "menu"
-		sounds.ui:play()
+		playSound(sounds.ui)
 		return
 	end
 
@@ -185,6 +240,25 @@ local function handleGameInput(key)
 end
 
 local function handleInput(key)
+	-- Global mute controls (work in all states)
+	if key == "m" then
+		musicMuted = not musicMuted
+		if musicMuted then
+			sounds.ambiance:pause()
+		else
+			sounds.ambiance:play()
+		end
+		return
+	elseif key == "s" then
+		soundsMuted = not soundsMuted
+		if soundsMuted then
+			sounds.ambiance:pause()
+		elseif not musicMuted then
+			sounds.ambiance:play()
+		end
+		return
+	end
+
 	if gameState == "menu" then
 		handleMenuInput(key)
 	elseif gameState == "instructions" then
@@ -200,8 +274,8 @@ function love.keypressed(key)
 end
 
 local function checkCollisions(newHead)
-	-- Check for wall collision (only in classic mode)
-	if gameMode == "classic" then
+	-- Check for wall collision (not in zen or survival mode)
+	if gameMode ~= "zen" and gameMode ~= "survival" then
 		if newHead.x < 1 or newHead.x > gridWidth or newHead.y < 1 or newHead.y > gridHeight then
 			return true
 		end
@@ -218,7 +292,12 @@ local function checkCollisions(newHead)
 end
 
 local function updateSpeed()
-	-- Adjusted thresholds for new scoring system (up to 5 pts per apple)
+	-- Survival mode doesn't use this function (speed managed by eating/missing)
+	if gameMode == "survival" then
+		return
+	end
+
+	-- Classic/Zen mode: Adjusted thresholds for new scoring system (up to 5 pts per apple)
 	if score < 15 then
 		moveDelay = 0.15
 	elseif score < 30 then
@@ -254,8 +333,8 @@ local function updateSnakeMovement(dt)
 			newHead.y = newHead.y - 1
 		end
 
-		-- Wrap around walls in zen mode
-		if gameMode == "zen" then
+		-- Wrap around walls in zen and survival mode
+		if gameMode == "zen" or gameMode == "survival" then
 			if newHead.x < 1 then
 				newHead.x = gridWidth
 			elseif newHead.x > gridWidth then
@@ -271,7 +350,11 @@ local function updateSnakeMovement(dt)
 		-- Check for collisions
 		if checkCollisions(newHead) then
 			gameOver = true
-			sounds.die:play()
+			playSound(sounds.die)
+			-- Update survival mode highscore (best time)
+			if gameMode == "survival" and survivalTimer > highscoreSurvival then
+				highscoreSurvival = survivalTimer
+			end
 			return
 		end
 
@@ -283,9 +366,13 @@ local function updateSnakeMovement(dt)
 			local pointsEarned
 			local r, g, b
 
-			-- In zen mode, always give 5 points and red color
+			-- In zen mode, always give 1 point and red color
 			if gameMode == "zen" then
-				pointsEarned = 5
+				pointsEarned = 1
+				r, g, b = 1, 0.1, 0.1 -- Red
+			elseif gameMode == "survival" then
+				-- In survival mode, no points (tracked by time instead)
+				pointsEarned = 0
 				r, g, b = 1, 0.1, 0.1 -- Red
 			else
 				-- Classic mode: Calculate score based on apple ripeness (5 decay stages)
@@ -322,13 +409,31 @@ local function updateSnakeMovement(dt)
 			particleSystem:emit(15)
 
 			score = score + pointsEarned
-			updateSpeed()
-			sounds.eat:setVolume(0.2)
-			sounds.eat:play()
-			if score > highscore then
-				highscore = score
+
+			-- Survival mode: eating regains speed (decrease delay by 10%)
+			if gameMode == "survival" then
+				moveDelay = math.max(0.05, moveDelay * 0.9)
+			else
+				-- Other modes: update speed based on score
+				updateSpeed()
 			end
+
+			sounds.eat:setVolume(0.2)
+			playSound(sounds.eat)
+
+			-- Update mode-specific high score (survival uses time, updated at game over)
+			if gameMode == "zen" then
+				if score > highscoreZen then
+					highscoreZen = score
+				end
+			elseif gameMode ~= "survival" then -- Classic mode
+				if score > highscoreClassic then
+					highscoreClassic = score
+				end
+			end
+
 			spawnFood()
+			-- Snake grows (don't remove tail)
 		else
 			-- No food eaten, remove tail (snake doesn't grow)
 			table.remove(snake)
@@ -353,6 +458,41 @@ function love.update(dt)
 	end
 
 	foodTimer = foodTimer + dt
+
+	-- Update survival timer
+	if gameMode == "survival" then
+		survivalTimer = survivalTimer + dt
+	end
+
+	-- In survival mode, food disappears after 5 seconds
+	if gameMode == "survival" and foodTimer > 5 then
+		-- Remove one tail segment when food is missed
+		if #snake > 1 then
+			table.remove(snake)
+			-- Lose speed (increase delay by 25%)
+			moveDelay = moveDelay * 1.25
+
+			-- Check if too slow to move (game over)
+			if moveDelay > 1.0 then
+				gameOver = true
+				playSound(sounds.die)
+				-- Update survival mode highscore (best time)
+				if survivalTimer > highscoreSurvival then
+					highscoreSurvival = survivalTimer
+				end
+			end
+		else
+			-- Game over if snake has no body left
+			gameOver = true
+			playSound(sounds.die)
+			-- Update survival mode highscore (best time)
+			if survivalTimer > highscoreSurvival then
+				highscoreSurvival = survivalTimer
+			end
+		end
+		spawnFood()
+	end
+
 	particleSystem:update(dt)
 	updateSnakeMovement(dt)
 end
@@ -369,8 +509,8 @@ end
 local function drawFood()
 	local r, g, b = 1, 0.1, 0.1 -- default red
 
-	-- In zen mode, always show red apple
-	if gameMode == "zen" then
+	-- In zen or survival mode, always show red apple
+	if gameMode == "zen" or gameMode == "survival" then
 		r, g, b = 1, 0.1, 0.1 -- Vibrant red
 	else
 		-- Classic mode: Natural apple decay colors (5 stages)
@@ -392,46 +532,115 @@ local function drawFood()
 		end
 	end
 
-	love.graphics.setColor(r, g, b, 1)
 	local foodX, foodY = gridToPixels(food.x, food.y)
-	love.graphics.rectangle("fill", foodX, foodY, gridSize, gridSize)
+
+	-- Pulsing glow effect (only in survival mode when decaying)
+	if gameMode == "survival" and foodTimer > 4 then
+		local time = love.timer.getTime()
+		local pulseSpeed = 8
+		local pulse = math.abs(math.sin(time * pulseSpeed))
+		local glowSize = gridSize + 8 * pulse -- Glow expands and contracts
+		local glowAlpha = 0.3 + 0.2 * pulse -- Glow alpha varies
+
+		-- Draw glow (larger, semi-transparent)
+		love.graphics.setColor(r, g, b, glowAlpha)
+		local glowOffset = (glowSize - gridSize) / 2
+		love.graphics.rectangle("fill", foodX - glowOffset, foodY - glowOffset, glowSize, glowSize)
+	end
+
+	-- Draw apple (solid) - shrinks when decaying in survival mode
+	local appleSize = gridSize
+	if gameMode == "survival" and foodTimer > 4 then
+		-- Shrink from full size to 0 over the last second
+		local shrinkFactor = math.max(0, 1 - (foodTimer - 4))
+		appleSize = gridSize * shrinkFactor
+	end
+
+	love.graphics.setColor(r, g, b, 1)
+	local shrinkOffset = (gridSize - appleSize) / 2
+	love.graphics.rectangle("fill", foodX + shrinkOffset, foodY + shrinkOffset, appleSize, appleSize)
 	love.graphics.setColor(1, 1, 1, 1)
 end
 
 local function drawLCDScore()
-	local scoreStr = string.format("%04d", math.min(score, 9999))
+	-- In survival mode, display time in MM:SS format
+	if gameMode == "survival" then
+		local totalSeconds = math.floor(survivalTimer)
+		local minutes = math.floor(totalSeconds / 60)
+		local seconds = totalSeconds % 60
 
-	-- Determine how many digits to highlight
-	local digitsToShow = math.max(1, math.floor(math.log10(math.max(score, 1))) + 1)
+		-- Format as MMSS (e.g., 0145 for 1:45)
+		local timeStr = string.format("%02d%02d", math.min(minutes, 99), seconds)
 
-	-- Center position: 15 cells wide (4 digits * 4 cells each), 5 cells tall
-	local startGridX = math.floor((gridWidth - 15) / 2) + 1
-	local startGridY = math.floor((gridHeight - 5) / 2) + 1
-	local startX, startY = gridToPixels(startGridX, startGridY)
+		-- Center position: 15 cells wide (4 digits * 4 cells each), 5 cells tall
+		local startGridX = math.floor((gridWidth - 15) / 2) + 1
+		local startGridY = math.floor((gridHeight - 5) / 2) + 1
+		local startX, startY = gridToPixels(startGridX, startGridY)
 
-	-- Draw background "8888"
-	love.graphics.setColor(0.2, 0.2, 0.2, 0.3)
-	for i = 1, 4 do
-		local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
-		lcd.drawDigit(8, digitX, startY, gridSize)
-	end
+		-- Draw background "8888"
+		love.graphics.setColor(0.2, 0.2, 0.2, 0.3)
+		for i = 1, 4 do
+			local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
+			lcd.drawDigit(8, digitX, startY, gridSize)
+		end
 
-	-- Draw score digits in simple gray
-	love.graphics.setColor(0.5, 0.5, 0.5, 0.9)
-	for i = 1, 4 do
-		if i > (4 - digitsToShow) then
-			local digit = tonumber(scoreStr:sub(i, i))
+		-- Draw time digits in simple gray
+		love.graphics.setColor(0.5, 0.5, 0.5, 0.9)
+		for i = 1, 4 do
+			local digit = tonumber(timeStr:sub(i, i))
 			local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
 			lcd.drawDigit(digit, digitX, startY, gridSize)
 		end
-	end
 
-	love.graphics.setColor(1, 1, 1, 1)
+		love.graphics.setColor(1, 1, 1, 1)
+	else
+		-- Classic and Zen modes: display score
+		local scoreStr = string.format("%04d", math.min(score, 9999))
+
+		-- Determine how many digits to highlight
+		local digitsToShow = math.max(1, math.floor(math.log10(math.max(score, 1))) + 1)
+
+		-- Center position: 15 cells wide (4 digits * 4 cells each), 5 cells tall
+		local startGridX = math.floor((gridWidth - 15) / 2) + 1
+		local startGridY = math.floor((gridHeight - 5) / 2) + 1
+		local startX, startY = gridToPixels(startGridX, startGridY)
+
+		-- Draw background "8888"
+		love.graphics.setColor(0.2, 0.2, 0.2, 0.3)
+		for i = 1, 4 do
+			local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
+			lcd.drawDigit(8, digitX, startY, gridSize)
+		end
+
+		-- Draw score digits in simple gray
+		love.graphics.setColor(0.5, 0.5, 0.5, 0.9)
+		for i = 1, 4 do
+			if i > (4 - digitsToShow) then
+				local digit = tonumber(scoreStr:sub(i, i))
+				local digitX = gridToPixels(startGridX + (i - 1) * 4, startGridY)
+				lcd.drawDigit(digit, digitX, startY, gridSize)
+			end
+		end
+
+		love.graphics.setColor(1, 1, 1, 1)
+	end
 end
 
 local function drawUI()
 	love.graphics.setFont(fontSmall)
-	love.graphics.print("highscore: " .. highscore, 10, 10)
+	local highscoreText
+	if gameMode == "zen" then
+		highscoreText = "highscore: " .. highscoreZen
+	elseif gameMode == "survival" then
+		-- Format highscore as MM:SS for survival mode
+		local totalSeconds = math.floor(highscoreSurvival)
+		local minutes = math.floor(totalSeconds / 60)
+		local seconds = totalSeconds % 60
+		highscoreText = string.format("best time: %02d:%02d", minutes, seconds)
+	else
+		highscoreText = "highscore: " .. highscoreClassic
+	end
+	love.graphics.print(highscoreText, 10, 10)
 end
 
 local function drawDebugInfo()
@@ -533,12 +742,12 @@ local function drawMenu()
 	love.graphics.setFont(fontTitle)
 	local title = "SNAKE"
 	local titleWidth = fontTitle:getWidth(title)
-	love.graphics.print(title, (baseWidth - titleWidth) / 2, 50)
+	love.graphics.print(title, (baseWidth - titleWidth) / 2, 20)
 
 	-- Menu options
 	love.graphics.setFont(fontMedium)
-	local startY = 200
-	local spacing = 50
+	local startY = 140
+	local spacing = 38
 
 	for i, option in ipairs(menuOptions) do
 		local optionWidth = fontMedium:getWidth(option)
@@ -562,97 +771,149 @@ local function drawMenu()
 	love.graphics.setColor(0.5, 0.5, 0.5, 1)
 	local hint = "Use UP/DOWN to select, ENTER to confirm"
 	local hintWidth = fontSmall:getWidth(hint)
-	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 40)
+	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 25)
 
 	love.graphics.setColor(1, 1, 1, 1)
 end
 
 local function drawInstructions()
 	love.graphics.setColor(1, 1, 1, 1)
+	local lineHeight = 16
+	local leftMargin = 40
+	local startY = 85
 
-	-- Title
-	love.graphics.setFont(fontMedium)
-	local title = "HOW TO PLAY"
-	love.graphics.print(title, 30, 20)
+	if instructionPage == 1 then
+		-- Page 1: Controls & Classic Mode
+		love.graphics.setFont(fontLarge)
+		love.graphics.print("CLASSIC MODE", leftMargin, 20)
 
-	love.graphics.setFont(fontSmall)
-	local lineHeight = 18
-	local sectionSpacing = 30 -- Equal spacing between sections
-	local leftX = 30
-	local rightX = 320
-	local startY = 70
-	local currentY = startY
+		love.graphics.setFont(fontSmall)
+		local currentY = startY
 
-	-- Left Column: Controls
-	love.graphics.setColor(1, 1, 1, 1)
-	love.graphics.print("CONTROLS:", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  Arrow Keys - Move", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  P - Pause", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  R - Restart", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  ESC - Menu", leftX, currentY)
-	currentY = currentY + sectionSpacing
+		-- Controls
+		love.graphics.print("CONTROLS:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Arrow Keys - Move", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("P - Pause  |  R - Restart  |  ESC - Menu", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("M - Mute Music  |  S - Mute All Sounds", leftMargin, currentY)
+		currentY = currentY + lineHeight + 15
 
-	-- Objective
-	love.graphics.print("OBJECTIVE:", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  Eat apples to grow", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  and score points.", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  Don't hit walls or", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  yourself!", leftX, currentY)
-	currentY = currentY + sectionSpacing
+		-- Rules
+		love.graphics.print("RULES:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Apple ripeness matters! Timing is the key.", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Walls are deadly. Avoid hitting yourself!", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
 
-	-- Tip
-	love.graphics.print("TIP:", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  The game speeds up", leftX, currentY)
-	currentY = currentY + lineHeight
-	love.graphics.print("  as you score more.", leftX, currentY)
+		-- Apple Legend
+		love.graphics.print("APPLE RIPENESS:", leftMargin, currentY)
+		currentY = currentY + lineHeight
 
-	-- Right Column: Apple Ripeness System
-	love.graphics.setColor(1, 1, 1, 1)
-	love.graphics.print("APPLE RIPENESS:", rightX, startY)
+		local appleData = {
+			{ color = { 0.4, 1, 0.2 }, text = "3 pts (unripe)" },
+			{ color = { 1, 0.1, 0.1 }, text = "5 pts (perfect!)" },
+			{ color = { 0.7, 0.1, 0.3 }, text = "2 pts (overripe)" },
+			{ color = { 0.6, 0.3, 0.1 }, text = "1 pt (rotten)" },
+			{ color = { 0.6, 0.2, 0.6 }, text = "-1 pt (toxic!)" },
+		}
 
-	local appleData = {
-		{ color = { 0.4, 1, 0.2 }, text = "3 pts (unripe)" },
-		{ color = { 1, 0.1, 0.1 }, text = "5 pts (perfect!)" },
-		{ color = { 0.7, 0.1, 0.3 }, text = "2 pts" },
-		{ color = { 0.6, 0.3, 0.1 }, text = "1 pt" },
-		{ color = { 0.6, 0.2, 0.6 }, text = "-1 pt (toxic!)" },
-	}
+		local squareSize = 8
+		for i, apple in ipairs(appleData) do
+			local y = currentY + (i - 1) * lineHeight
+			love.graphics.setColor(apple.color[1], apple.color[2], apple.color[3], 1)
+			love.graphics.rectangle("fill", leftMargin, y + 3, squareSize, squareSize)
+			love.graphics.setColor(1, 1, 1, 1)
+			love.graphics.print(apple.text, leftMargin + 12, y)
+		end
 
-	local appleStartY = startY + lineHeight * 2
-	local squareSize = 10
-	local squareX = rightX + 5
+		currentY = currentY + #appleData * lineHeight
+		love.graphics.setColor(0.8, 0.8, 0.8, 1)
+		love.graphics.print("Apples change color over time!", leftMargin, currentY)
+	elseif instructionPage == 2 then
+		-- Page 2: Zen Mode
+		love.graphics.setFont(fontLarge)
+		love.graphics.print("ZEN MODE", leftMargin, 20)
 
-	for i, apple in ipairs(appleData) do
-		local y = appleStartY + (i - 1) * lineHeight
+		love.graphics.setFont(fontSmall)
+		local currentY = startY
 
-		-- Draw colored square
-		love.graphics.setColor(apple.color[1], apple.color[2], apple.color[3], 1)
-		love.graphics.rectangle("fill", squareX, y + 2, squareSize, squareSize)
+		-- Controls
+		love.graphics.print("CONTROLS:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Arrow Keys - Move", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("P - Pause  |  R - Restart  |  ESC - Menu", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("M - Mute Music  |  S - Mute All Sounds", leftMargin, currentY)
+		currentY = currentY + lineHeight + 15
 
-		-- Draw text
-		love.graphics.setColor(1, 1, 1, 1)
-		love.graphics.print(apple.text, squareX + squareSize + 8, y)
+		love.graphics.print("Relax and flow...", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
+
+		love.graphics.print("FEATURES:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+
+		love.graphics.print("Pass through walls", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Wrap around to the other side", leftMargin, currentY)
+		currentY = currentY + lineHeight + 8
+
+		love.graphics.print("Red apples only", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("No ripeness timing needed", leftMargin, currentY)
+		currentY = currentY + lineHeight + 8
+
+		love.graphics.print("Always 1 point per apple", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Simple and stress-free", leftMargin, currentY)
+	elseif instructionPage == 3 then
+		-- Page 3: Survival Mode
+		love.graphics.setFont(fontLarge)
+		love.graphics.print("SURVIVAL MODE", leftMargin, 20)
+
+		love.graphics.setFont(fontSmall)
+		local currentY = startY
+
+		-- Controls
+		love.graphics.print("CONTROLS:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("Arrow Keys - Move", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("P - Pause  |  R - Restart  |  ESC - Menu", leftMargin, currentY)
+		currentY = currentY + lineHeight
+		love.graphics.print("M - Mute Music  |  S - Mute All Sounds", leftMargin, currentY)
+		currentY = currentY + lineHeight + 15
+
+		love.graphics.print("How long can you last?", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
+
+		love.graphics.print("MECHANICS:", leftMargin, currentY)
+		currentY = currentY + lineHeight
+
+		love.graphics.print("Apples vanish over time", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
+
+		love.graphics.print("Eat apples to stay fast", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
+
+		love.graphics.print("Slow down too much and you die", leftMargin, currentY)
+		currentY = currentY + lineHeight + 10
+
+		love.graphics.print("Keep eating to survive!", leftMargin, currentY)
 	end
 
-	-- Additional info
-	love.graphics.setColor(0.8, 0.8, 0.8, 1)
-	love.graphics.print("Apples change color", rightX, appleStartY + 6 * lineHeight)
-	love.graphics.print("over time!", rightX, appleStartY + 7 * lineHeight)
-
-	-- Back hint
+	-- Page indicator and navigation hint
 	love.graphics.setColor(0.5, 0.5, 0.5, 1)
-	local hint = "Press ENTER or ESC to return"
+	local pageText = instructionPage .. " / 3"
+	local pageWidth = fontSmall:getWidth(pageText)
+	love.graphics.print(pageText, (baseWidth - pageWidth) / 2, baseHeight - 40)
+
+	local hint = "LEFT/RIGHT • ENTER/ESC to return"
 	local hintWidth = fontSmall:getWidth(hint)
-	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 25)
+	love.graphics.print(hint, (baseWidth - hintWidth) / 2, baseHeight - 22)
 
 	love.graphics.setColor(1, 1, 1, 1)
 end
@@ -681,10 +942,12 @@ function love.draw()
 	love.graphics.setColor(0.15, 0.15, 0.15)
 	love.graphics.rectangle("fill", 0, 0, baseWidth, baseHeight)
 
-	-- Draw game border
-	love.graphics.setColor(0.3, 0.3, 0.3)
-	love.graphics.setLineWidth(2)
-	love.graphics.rectangle("line", 0, 0, baseWidth, baseHeight)
+	-- Draw game border (not in zen or survival mode during gameplay)
+	if gameState ~= "playing" or (gameMode ~= "zen" and gameMode ~= "survival") then
+		love.graphics.setColor(0.3, 0.3, 0.3)
+		love.graphics.setLineWidth(2)
+		love.graphics.rectangle("line", 0, 0, baseWidth, baseHeight)
+	end
 
 	-- Reset color for game objects
 	love.graphics.setColor(1, 1, 1)
